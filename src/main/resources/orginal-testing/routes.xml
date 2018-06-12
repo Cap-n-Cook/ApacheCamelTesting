@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans 
+	xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:camel="http://camel.apache.org/schema/spring"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans-3.0.xsd
+           http://camel.apache.org/schema/spring 
+           http://camel.apache.org/schema/spring/camel-spring.xsd">
+
+<!-- <routeContext id="postCbrRoute" xmlns="http://camel.apache.org/schema/spring">
+	<route>
+		<from uri="jms:incomingOrders"/>
+		<choice>
+			<when>
+				<simple>${header.CamelFileName} regex '^.*(csv|csl)$'</simple>
+				<to uri="jms:csvOrders"/>
+			</when>
+			<when>
+				<simple>${header.CamelFileName} regex '^.*xml$'</simple>
+				<to uri="jms:xmlOrders"/>
+			</when>
+			<otherwise>
+				<to uri="jms:badOrders"/>
+				<stop/>
+			</otherwise>
+		</choice> Equivalent to the end() in java.
+		<to uri="jms:continuedProcessing"/>
+	</route>
+
+</routeContext> -->
+
+<!-- The executor that is required by the multiParaThreadPoolEx to change the number of thread pools. -->
+<bean id="executor" class="java.util.concurrent.Executors" factory-method="newFixedThreadPool">
+	<constructor-arg index="0" value="16"/>
+</bean>
+
+<!-- Processor bean. -->
+<bean id="OrderReceivingProcessor" class="com.bits.apachetesting.ReceivingProcessor"/>
+
+<!-- Processor bean. -->
+<bean id="RealOrderProcessor" class="com.bits.apachetesting.TestOrderProcessor"/>
+
+<!-- For this route to work, we need to specify the executor bean. -->
+<routeContext id="multiParaThreadPoolEx" xmlns="http://camel.apache.org/schema/spring">
+	
+	<!-- Grab Orders -->
+	<route>
+		<from uri="file:src/data?noop=true"/>
+		<process ref="OrderReceivingProcessor"/>
+		<to uri="jms:incomingOrders"/>
+	</route>
+	<!-- CBR -->
+	<route>
+		<from uri="jms:incomingOrders"/>
+			<choice>
+				<when>
+					<simple>${header.CamelFileName} regex '^.*xml$'</simple>
+					<to uri="jms:xmlOrders"/>
+				</when>
+				<when>
+					<simple>${header.CamelFileName} regex '^.*(csv|csl)$'</simple>
+					<to uri="jms:csvOrders"/>
+				</when>
+				<otherwise>
+					<to uri="jms:badOrders"/>
+					<stop/>
+				</otherwise>
+			</choice>
+			<!-- Also send good orders to the next endpoint for further processing. -->
+			<to uri="jms:continuedProcessing"/>
+	</route>
+	<!-- Filter test orders. -->
+	<route>
+		<from uri="jms:xmlOrders"/>
+		<!-- Only allow xml orders that are not test orders. -->
+		<filter>
+			<xpath>/order[(@test='False')]</xpath>
+			<process ref="RealOrderProcessor"/>
+		</filter>
+		<to uri="file:src/realXmlOrders"/>
+	</route>
+	
+	<route>
+		<from uri="jms:continuedProcessing"/>
+		<multicast stopOnException="true" parallelProcessing="true" executorServiceRef="executor">
+			<to uri="file:src/continuedProcessing/Xml-Data"/>
+			<to uri="file:src/continuedProcessing/Csv-Data"/>
+		</multicast>	
+		<!--<to uri="file:src/output"/>-->
+	</route>
+
+</routeContext>
+
+</beans>
